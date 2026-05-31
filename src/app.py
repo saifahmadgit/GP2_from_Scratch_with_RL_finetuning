@@ -47,24 +47,17 @@ def _find_latest_checkpoint() -> str | None:
 
 
 def _load_model(ckpt_path: str):
-    """
-    Instantiate GPT and load weights from *ckpt_path*.
-
-    ── STUB ──  Replace the body below once your model class exists.
-    """
-    # Example (uncomment when model.py is ready):
-    #
-    #   from model import GPT, GPTConfig
-    #   cfg = GPTConfig(
-    #       block_size=BLOCK_SIZE, vocab_size=VOCAB_SIZE,
-    #       n_layer=N_LAYER, n_head=N_HEAD, n_embd=N_EMBD, dropout=DROPOUT,
-    #   )
-    #   m = GPT(cfg).to(_device)
-    #   state = torch.load(ckpt_path, map_location=_device)
-    #   m.load_state_dict(state["model"])
-    #   m.eval()
-    #   return m
-    raise NotImplementedError("Plug your GPT model in here (see comment above).")
+    """Instantiate GPT and load weights from *ckpt_path*."""
+    from model import GPT, GPTConfig
+    cfg = GPTConfig(
+        block_size=BLOCK_SIZE, vocab_size=VOCAB_SIZE,
+        n_layer=N_LAYER, n_head=N_HEAD, n_embd=N_EMBD, dropout=DROPOUT,
+    )
+    m = GPT(cfg).to(_device)
+    state = torch.load(ckpt_path, map_location=_device, weights_only=False)
+    m.load_state_dict(state["model"])
+    m.eval()
+    return m
 
 
 def _get_model():
@@ -91,28 +84,12 @@ def _generate(
     temperature: float,
     top_k: int,
 ) -> list[int]:
-    """
-    Token-by-token autoregressive generation.
-
-    ── STUB ──  Replace with model.generate() once your model exists.
-    """
-    # Example (uncomment when model.py is ready):
-    #
-    #   import torch.nn.functional as F
-    #   ids = torch.tensor([prompt_ids], dtype=torch.long, device=_device)
-    #   with torch.no_grad():
-    #       for _ in range(max_new_tokens):
-    #           ctx = ids[:, -BLOCK_SIZE:]
-    #           logits, _ = model(ctx)          # (1, T, vocab)
-    #           logits = logits[:, -1, :] / temperature
-    #           if top_k > 0:
-    #               v, _ = torch.topk(logits, top_k)
-    #               logits[logits < v[:, [-1]]] = float('-inf')
-    #           probs = F.softmax(logits, dim=-1)
-    #           next_id = torch.multinomial(probs, num_samples=1)
-    #           ids = torch.cat([ids, next_id], dim=1)
-    #   return ids[0].tolist()
-    raise NotImplementedError("Plug your generation loop in here (see comment above).")
+    """Token-by-token autoregressive generation via model.generate()."""
+    ids = torch.tensor([prompt_ids], dtype=torch.long, device=_device)
+    with torch.no_grad():
+        out = model.generate(ids, max_new_tokens, temperature=temperature,
+                             top_k=top_k if top_k > 0 else None)
+    return out[0].tolist()
 
 
 # ---------------------------------------------------------------------------
