@@ -30,22 +30,11 @@ if _SRC not in sys.path:
 
 from config import (
     BLOCK_SIZE, VOCAB_SIZE, N_LAYER, N_HEAD, N_EMBD, DROPOUT,
+    BATCH_SIZE, MAX_ITERS, EVAL_INTERVAL, EVAL_ITERS,
+    LEARNING_RATE, MIN_LR, WARMUP_ITERS, GRAD_CLIP,
     DATA_DIR, CHECKPOINT_DIR,
 )
 from model import GPT, GPTConfig
-
-# ---------------------------------------------------------------------------
-# Training hyperparameters
-# ---------------------------------------------------------------------------
-BATCH_SIZE    = 8        # sequences per step — lower this if you run OOM
-MAX_ITERS     = 5000
-EVAL_INTERVAL = 500
-EVAL_ITERS    = 100      # mini-batches to average for loss estimate
-LEARNING_RATE = 6e-4
-MIN_LR        = 6e-5     # cosine decay floor
-WARMUP_ITERS  = 100
-GRAD_CLIP     = 1.0
-# ---------------------------------------------------------------------------
 
 torch.manual_seed(1337)
 device = "cuda" if torch.cuda.is_available() else "cpu"
