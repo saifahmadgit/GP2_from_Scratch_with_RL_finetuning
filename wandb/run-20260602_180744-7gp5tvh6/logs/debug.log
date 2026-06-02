@@ -17,3 +17,8 @@ config: {'n_layer': 4, 'n_head': 4, 'n_embd': 256, 'block_size': 256, 'vocab_siz
 2026-06-02 18:07:45,570 INFO    MainThread:1927438 [wandb_run.py:_redirect():2428] Wrapping output streams.
 2026-06-02 18:07:45,570 INFO    MainThread:1927438 [wandb_run.py:_redirect():2451] Redirects installed.
 2026-06-02 18:07:45,574 INFO    MainThread:1927438 [wandb_init.py:init():1095] run started, returning control to user process
+2026-06-02 18:09:33,427 INFO    MainThread:1927438 [wandb_run.py:_finish():2271] finishing run saif-ahmad98745-northwestern-university/gpt2-from-scratch/7gp5tvh6
+2026-06-02 18:09:33,428 INFO    MainThread:1927438 [wandb_run.py:_atexit_cleanup():2476] got exitcode: 0
+2026-06-02 18:09:33,428 INFO    MainThread:1927438 [wandb_run.py:_restore():2458] restore
+2026-06-02 18:09:33,428 INFO    MainThread:1927438 [wandb_run.py:_restore():2464] restore done
+2026-06-02 18:09:33,947 INFO    MainThread:1927438 [wandb_run.py:_footer_sync_info():3877] logging synced files
