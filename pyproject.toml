@@ -9,9 +9,21 @@ dependencies = [
     "numpy>=1.26",
     "tiktoken>=0.7",
     "gradio>=4.0",
+    "wandb>=0.16",
 ]
 
 [tool.uv]
 # This repo is a collection of scripts under src/ (not an importable package),
 # so tell uv to only manage the environment, not build/install the project.
 package = false
+
+# The default PyPI torch is built for CUDA 13 (cu130), which is too new for the
+# NVIDIA 550 driver here (max CUDA 12.4). Pull torch from PyTorch's cu124 index
+# so torch.cuda.is_available() works on this driver.
+[[tool.uv.index]]
+name = "pytorch-cu124"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu124" }

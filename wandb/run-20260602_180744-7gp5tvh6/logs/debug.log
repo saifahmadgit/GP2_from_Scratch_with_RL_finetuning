@@ -1,0 +1,19 @@
+2026-06-02 18:07:44,179 INFO    MainThread:1927438 [wandb_setup.py:_flush():81] Current SDK version is 0.27.0
+2026-06-02 18:07:44,179 INFO    MainThread:1927438 [wandb_setup.py:_flush():81] Configure stats pid to 1927438
+2026-06-02 18:07:44,179 INFO    MainThread:1927438 [wandb_setup.py:_flush():81] Loading settings from environment variables
+2026-06-02 18:07:44,179 INFO    MainThread:1927438 [wandb_init.py:setup_run_log_directory():723] Logging user logs to /home/wgk1727/GPT2_from_Scratch_with_RL_finetuning/wandb/run-20260602_180744-7gp5tvh6/logs/debug.log
+2026-06-02 18:07:44,179 INFO    MainThread:1927438 [wandb_init.py:setup_run_log_directory():724] Logging internal logs to /home/wgk1727/GPT2_from_Scratch_with_RL_finetuning/wandb/run-20260602_180744-7gp5tvh6/logs/debug-internal.log
+2026-06-02 18:07:44,179 INFO    MainThread:1927438 [wandb_init.py:init():851] calling init triggers
+2026-06-02 18:07:44,179 INFO    MainThread:1927438 [wandb_init.py:init():856] wandb.init called with sweep_config: {}
+config: {'n_layer': 4, 'n_head': 4, 'n_embd': 256, 'block_size': 256, 'vocab_size': 50257, 'dropout': 0.2, 'n_params': 16087808, 'batch_size': 8, 'max_iters': 5000, 'learning_rate': 0.0006, 'min_lr': 6e-05, 'warmup_iters': 100, 'weight_decay': 0.1, 'train_tokens': 139707, '_wandb': {}}
+2026-06-02 18:07:44,179 INFO    MainThread:1927438 [wandb_init.py:init():899] starting backend
+2026-06-02 18:07:44,607 INFO    MainThread:1927438 [wandb_init.py:init():914] sending inform_init request
+2026-06-02 18:07:44,917 INFO    MainThread:1927438 [wandb_init.py:init():919] backend started and connected
+2026-06-02 18:07:44,926 INFO    MainThread:1927438 [wandb_init.py:init():989] updated telemetry
+2026-06-02 18:07:44,930 INFO    MainThread:1927438 [wandb_init.py:init():1012] communicating run to backend with 90.0 second timeout
+2026-06-02 18:07:45,492 INFO    MainThread:1927438 [wandb_init.py:init():1057] starting run threads in backend
+2026-06-02 18:07:45,570 INFO    MainThread:1927438 [wandb_run.py:_console_start():2509] atexit reg
+2026-06-02 18:07:45,570 INFO    MainThread:1927438 [wandb_run.py:_redirect():2359] redirect: wrap_raw
+2026-06-02 18:07:45,570 INFO    MainThread:1927438 [wandb_run.py:_redirect():2428] Wrapping output streams.
+2026-06-02 18:07:45,570 INFO    MainThread:1927438 [wandb_run.py:_redirect():2451] Redirects installed.
+2026-06-02 18:07:45,574 INFO    MainThread:1927438 [wandb_init.py:init():1095] run started, returning control to user process

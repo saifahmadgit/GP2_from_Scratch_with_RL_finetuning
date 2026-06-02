@@ -33,6 +33,7 @@ from config import (
     BATCH_SIZE, MAX_ITERS, EVAL_INTERVAL, EVAL_ITERS,
     LEARNING_RATE, MIN_LR, WARMUP_ITERS, GRAD_CLIP,
     DATA_DIR, CHECKPOINT_DIR,
+    WANDB_LOG, WANDB_PROJECT, WANDB_RUN_NAME,
 )
 from model import GPT, GPTConfig
 
@@ -126,6 +127,31 @@ optimizer = torch.optim.AdamW(
 CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
 
 # ---------------------------------------------------------------------------
+# Weights & Biases (optional)
+# ---------------------------------------------------------------------------
+use_wandb = WANDB_LOG
+if use_wandb:
+    try:
+        import wandb
+        wandb.init(
+            project=WANDB_PROJECT,
+            name=WANDB_RUN_NAME,
+            config={
+                "n_layer": config.n_layer, "n_head": config.n_head,
+                "n_embd": config.n_embd, "block_size": config.block_size,
+                "vocab_size": config.vocab_size, "dropout": config.dropout,
+                "n_params": n_params, "batch_size": BATCH_SIZE,
+                "max_iters": MAX_ITERS, "learning_rate": LEARNING_RATE,
+                "min_lr": MIN_LR, "warmup_iters": WARMUP_ITERS,
+                "weight_decay": 0.1, "train_tokens": len(train_data),
+            },
+        )
+        print(f"wandb: logging to project '{WANDB_PROJECT}'")
+    except Exception as e:
+        use_wandb = False
+        print(f"wandb disabled ({e}). Continuing without logging.")
+
+# ---------------------------------------------------------------------------
 # Training loop
 # ---------------------------------------------------------------------------
 for step in range(MAX_ITERS):
@@ -145,6 +171,11 @@ for step in range(MAX_ITERS):
         ckpt_path = CHECKPOINT_DIR / f"ckpt_{step:05d}.pt"
         torch.save({"step": step, "model": model.state_dict(), "config": config}, ckpt_path)
         print(f"         saved → {ckpt_path.name}")
+        if use_wandb:
+            wandb.log(
+                {"train/loss": losses["train"], "val/loss": losses["val"]},
+                step=step,
+            )
 
     # Forward + backward
     xb, yb = get_batch("train")
@@ -154,4 +185,9 @@ for step in range(MAX_ITERS):
     torch.nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP)
     optimizer.step()
 
+    if use_wandb:
+        wandb.log({"train/batch_loss": loss.item(), "lr": lr}, step=step)
+
 print("Training complete.")
+if use_wandb:
+    wandb.finish()

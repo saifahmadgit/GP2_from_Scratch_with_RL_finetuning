@@ -1,0 +1,3 @@
+wandb: logging to project 'gpt2-from-scratch'
+step     0 | lr 0.00e+00 | train loss 10.8479 | val loss 10.8450
+         saved → ckpt_00000.pt
