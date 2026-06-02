@@ -1,0 +1,17 @@
+[project]
+name = "gpt2-from-scratch-with-rl-finetuning"
+version = "0.1.0"
+description = "GPT-2 implemented from scratch in PyTorch, with a Gradio UI and RL fine-tuning."
+readme = "Readme.md"
+requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.4",
+    "numpy>=1.26",
+    "tiktoken>=0.7",
+    "gradio>=4.0",
+]
+
+[tool.uv]
+# This repo is a collection of scripts under src/ (not an importable package),
+# so tell uv to only manage the environment, not build/install the project.
+package = false
