@@ -29,7 +29,7 @@ if _SRC not in sys.path:
     sys.path.insert(0, _SRC)
 
 from config import (
-    BLOCK_SIZE, VOCAB_SIZE, N_LAYER, N_HEAD, N_EMBD, DROPOUT,
+    BLOCK_SIZE,
     BATCH_SIZE, MAX_ITERS, EVAL_INTERVAL, EVAL_ITERS,
     LEARNING_RATE, MIN_LR, WARMUP_ITERS, GRAD_CLIP,
     DATA_DIR, CHECKPOINT_DIR,
@@ -111,14 +111,7 @@ def get_lr(step: int) -> float:
 # ---------------------------------------------------------------------------
 # Model
 # ---------------------------------------------------------------------------
-config = GPTConfig(
-    block_size=BLOCK_SIZE,
-    vocab_size=VOCAB_SIZE,
-    n_layer=N_LAYER,
-    n_head=N_HEAD,
-    n_embd=N_EMBD,
-    dropout=DROPOUT,
-)
+config = GPTConfig()  # defaults sourced from config.py
 model = GPT(config).to(device)
 n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: {n_params / 1e6:.1f}M parameters")

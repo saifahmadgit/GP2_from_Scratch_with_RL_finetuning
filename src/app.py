@@ -23,7 +23,7 @@ import gradio as gr  # noqa: E402
 import tiktoken  # noqa: E402
 import torch  # noqa: E402
 
-from config import CHECKPOINT_DIR, BLOCK_SIZE, N_LAYER, N_HEAD, N_EMBD, VOCAB_SIZE, DROPOUT  # noqa: E402
+from config import CHECKPOINT_DIR  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Tokeniser (GPT-2 BPE — same encoding your model will use)
@@ -49,10 +49,7 @@ def _find_latest_checkpoint() -> str | None:
 def _load_model(ckpt_path: str):
     """Instantiate GPT and load weights from *ckpt_path*."""
     from model import GPT, GPTConfig
-    cfg = GPTConfig(
-        block_size=BLOCK_SIZE, vocab_size=VOCAB_SIZE,
-        n_layer=N_LAYER, n_head=N_HEAD, n_embd=N_EMBD, dropout=DROPOUT,
-    )
+    cfg = GPTConfig()  # defaults sourced from config.py
     m = GPT(cfg).to(_device)
     state = torch.load(ckpt_path, map_location=_device, weights_only=False)
     m.load_state_dict(state["model"])

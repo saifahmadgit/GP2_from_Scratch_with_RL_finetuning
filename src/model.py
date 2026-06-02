@@ -15,46 +15,66 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
+from config import BLOCK_SIZE, VOCAB_SIZE, N_LAYER, N_HEAD, N_EMBD, DROPOUT
+
 
 @dataclass
 class GPTConfig:
-    block_size: int = 1024
-    vocab_size: int = 50257
-    n_layer: int = 12
-    n_head: int = 12
-    n_embd: int = 768
-    dropout: float = 0.1
+    block_size: int = BLOCK_SIZE
+    vocab_size: int = VOCAB_SIZE
+    n_layer: int = N_LAYER
+    n_head: int = N_HEAD
+    n_embd: int = N_EMBD
+    dropout: float = DROPOUT
 
 
-class CausalSelfAttention(nn.Module):
+class Head(nn.Module):
+    """One head of self-attention (Karpathy "build GPT" style)."""
+
+    def __init__(self, config: GPTConfig, head_size: int):
+        super().__init__()
+        self.key   = nn.Linear(config.n_embd, head_size, bias=False)
+        self.query = nn.Linear(config.n_embd, head_size, bias=False)
+        self.value = nn.Linear(config.n_embd, head_size, bias=False)
+        # causal mask — lower-triangular ones, stored as a buffer (not a parameter)
+        self.register_buffer(
+            "tril", torch.tril(torch.ones(config.block_size, config.block_size))
+        )
+        self.dropout = nn.Dropout(config.dropout)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        B, T, C = x.shape
+        k = self.key(x)     # (B, T, head_size)
+        q = self.query(x)   # (B, T, head_size)
+        # compute attention scores ("affinities")
+        wei = q @ k.transpose(-2, -1) * k.shape[-1] ** -0.5   # (B, T, T)
+        wei = wei.masked_fill(self.tril[:T, :T] == 0, float("-inf"))
+        wei = F.softmax(wei, dim=-1)                          # (B, T, T)
+        wei = self.dropout(wei)
+        # weighted aggregation of the values
+        v = self.value(x)   # (B, T, head_size)
+        out = wei @ v       # (B, T, head_size)
+        return out
+
+
+class MultiHeadAttention(nn.Module):
+    """Multiple heads of self-attention in parallel """
 
     def __init__(self, config: GPTConfig):
         super().__init__()
         assert config.n_embd % config.n_head == 0
-        self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd)
-        self.c_proj = nn.Linear(config.n_embd, config.n_embd)
-        self.c_proj.SCALE_INIT = 1  # flag for scaled init in GPT._init_weights
-        self.resid_dropout = nn.Dropout(config.dropout)
-        self.n_head = config.n_head
-        self.n_embd = config.n_embd
-        self.dropout = config.dropout
+        head_size = config.n_embd // config.n_head
+        self.heads = nn.ModuleList(
+            [Head(config, head_size) for _ in range(config.n_head)]
+        )
+        self.proj = nn.Linear(config.n_embd, config.n_embd)
+        self.proj.SCALE_INIT = 1  # flag for scaled init in GPT._init_weights
+        self.dropout = nn.Dropout(config.dropout)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        B, T, C = x.shape
-        q, k, v = self.c_attn(x).split(self.n_embd, dim=2)
-        head_size = C // self.n_head
-        q = q.view(B, T, self.n_head, head_size).transpose(1, 2)  # (B, nh, T, hs)
-        k = k.view(B, T, self.n_head, head_size).transpose(1, 2)
-        v = v.view(B, T, self.n_head, head_size).transpose(1, 2)
-        # Flash attention — fused CUDA kernel when available
-        y = F.scaled_dot_product_attention(
-            q, k, v,
-            attn_mask=None,
-            dropout_p=self.dropout if self.training else 0.0,
-            is_causal=True,
-        )
-        y = y.transpose(1, 2).contiguous().view(B, T, C)
-        return self.resid_dropout(self.c_proj(y))
+        out = torch.cat([h(x) for h in self.heads], dim=-1)  # (B, T, n_embd)
+        out = self.dropout(self.proj(out))
+        return out
 
 
 class MLP(nn.Module):
@@ -76,7 +96,7 @@ class Block(nn.Module):
     def __init__(self, config: GPTConfig):
         super().__init__()
         self.ln_1 = nn.LayerNorm(config.n_embd)
-        self.attn = CausalSelfAttention(config)
+        self.attn = MultiHeadAttention(config)
         self.ln_2 = nn.LayerNorm(config.n_embd)
         self.mlp  = MLP(config)
 
@@ -91,16 +111,14 @@ class GPT(nn.Module):
     def __init__(self, config: GPTConfig):
         super().__init__()
         self.config = config
-        self.transformer = nn.ModuleDict(dict(
-            wte  = nn.Embedding(config.vocab_size, config.n_embd),
-            wpe  = nn.Embedding(config.block_size, config.n_embd),
-            drop = nn.Dropout(config.dropout),
-            h    = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
-            ln_f = nn.LayerNorm(config.n_embd),
-        ))
+        self.token_embedding    = nn.Embedding(config.vocab_size, config.n_embd)
+        self.position_embedding = nn.Embedding(config.block_size, config.n_embd)
+        self.drop = nn.Dropout(config.dropout)
+        self.blocks = nn.Sequential(*[Block(config) for _ in range(config.n_layer)])
+        self.ln_f = nn.LayerNorm(config.n_embd)          # final layer norm
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
         # Weight tying: token embedding and LM head share the same matrix
-        self.transformer.wte.weight = self.lm_head.weight
+        self.token_embedding.weight = self.lm_head.weight
         self.apply(self._init_weights)
 
     def _init_weights(self, module: nn.Module):
@@ -124,12 +142,11 @@ class GPT(nn.Module):
         assert T <= self.config.block_size, f"Sequence length {T} > block_size {self.config.block_size}"
         pos = torch.arange(T, dtype=torch.long, device=idx.device)
 
-        tok_emb = self.transformer.wte(idx)       # (B, T, n_embd)
-        pos_emb = self.transformer.wpe(pos)        # (T, n_embd)
-        x = self.transformer.drop(tok_emb + pos_emb)
-        for block in self.transformer.h:
-            x = block(x)
-        x = self.transformer.ln_f(x)
+        tok_emb = self.token_embedding(idx)        # (B, T, n_embd)
+        pos_emb = self.position_embedding(pos)      # (T, n_embd)
+        x = self.drop(tok_emb + pos_emb)
+        x = self.blocks(x)                          # (B, T, n_embd)
+        x = self.ln_f(x)
         logits = self.lm_head(x)                   # (B, T, vocab_size)
 
         loss = None
