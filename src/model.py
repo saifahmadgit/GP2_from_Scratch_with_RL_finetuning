@@ -133,11 +133,11 @@ class GPT(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(
-        self,
-        idx: torch.Tensor,
-        targets: torch.Tensor | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor | None]:
+    def trunk(self, idx: torch.Tensor) -> torch.Tensor:
+        """Run the transformer body and return the final hidden states (B, T, n_embd).
+
+        Shared by the LM head (the actor) and, in RL fine-tuning, the value head
+        (the critic). Both read this same representation of the state."""
         _, T = idx.shape
         assert T <= self.config.block_size, f"Sequence length {T} > block_size {self.config.block_size}"
         pos = torch.arange(T, dtype=torch.long, device=idx.device)
@@ -147,6 +147,14 @@ class GPT(nn.Module):
         x = self.drop(tok_emb + pos_emb)
         x = self.blocks(x)                          # (B, T, n_embd)
         x = self.ln_f(x)
+        return x
+
+    def forward(
+        self,
+        idx: torch.Tensor,
+        targets: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
+        x = self.trunk(idx)
         logits = self.lm_head(x)                   # (B, T, vocab_size)
 
         loss = None

@@ -1,0 +1,52 @@
+wandb: logging to project 'gpt2-from-scratch'
+step     0 | lr 0.00e+00 | train loss 10.8050 | val loss 10.8484
+         saved → ckpt_00000.pt
+step   500 | lr 5.98e-04 | train loss 4.8142 | val loss 5.8454
+         saved → ckpt_00500.pt
+step  1000 | lr 5.92e-04 | train loss 4.5899 | val loss 5.5742
+         saved → ckpt_01000.pt
+step  1500 | lr 5.82e-04 | train loss 4.3695 | val loss 5.4429
+         saved → ckpt_01500.pt
+step  2000 | lr 5.67e-04 | train loss 4.2314 | val loss 5.3837
+         saved → ckpt_02000.pt
+step  2500 | lr 5.48e-04 | train loss 4.1832 | val loss 5.4389
+         saved → ckpt_02500.pt
+step  3000 | lr 5.25e-04 | train loss 4.1104 | val loss 5.3142
+         saved → ckpt_03000.pt
+step  3500 | lr 4.98e-04 | train loss 3.9848 | val loss 5.3574
+         saved → ckpt_03500.pt
+step  4000 | lr 4.69e-04 | train loss 3.9536 | val loss 5.1845
+         saved → ckpt_04000.pt
+step  4500 | lr 4.37e-04 | train loss 3.9405 | val loss 5.1983
+         saved → ckpt_04500.pt
+step  5000 | lr 4.04e-04 | train loss 3.9076 | val loss 5.1836
+         saved → ckpt_05000.pt
+step  5500 | lr 3.69e-04 | train loss 3.8610 | val loss 5.1032
+         saved → ckpt_05500.pt
+step  6000 | lr 3.34e-04 | train loss 3.8194 | val loss 4.9407
+         saved → ckpt_06000.pt
+step  6500 | lr 2.98e-04 | train loss 3.8307 | val loss 5.0308
+         saved → ckpt_06500.pt
+step  7000 | lr 2.63e-04 | train loss 3.7858 | val loss 5.0979
+         saved → ckpt_07000.pt
+step  7500 | lr 2.29e-04 | train loss 3.6969 | val loss 5.0961
+         saved → ckpt_07500.pt
+step  8000 | lr 1.97e-04 | train loss 3.7267 | val loss 5.0713
+         saved → ckpt_08000.pt
+step  8500 | lr 1.67e-04 | train loss 3.7162 | val loss 5.0121
+         saved → ckpt_08500.pt
+step  9000 | lr 1.40e-04 | train loss 3.7080 | val loss 4.9935
+         saved → ckpt_09000.pt
+step  9500 | lr 1.17e-04 | train loss 3.7087 | val loss 5.0432
+         saved → ckpt_09500.pt
+step 10000 | lr 9.68e-05 | train loss 3.6511 | val loss 5.1075
+         saved → ckpt_10000.pt
+step 10500 | lr 8.09e-05 | train loss 3.6871 | val loss 5.0437
+         saved → ckpt_10500.pt
+step 11000 | lr 6.94e-05 | train loss 3.6657 | val loss 4.9896
+         saved → ckpt_11000.pt
+step 11500 | lr 6.23e-05 | train loss 3.6719 | val loss 5.0180
+         saved → ckpt_11500.pt
+step 11999 | lr 6.00e-05 | train loss 3.6037 | val loss 4.9561
+         saved → ckpt_11999.pt
+Training complete.
