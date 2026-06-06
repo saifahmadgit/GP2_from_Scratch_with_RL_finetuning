@@ -1,0 +1,51 @@
+{
+  "os": "Linux-6.8.0-31-generic-x86_64-with-glibc2.39",
+  "python": "CPython 3.11.14",
+  "startedAt": "2026-06-06T00:25:10.523358Z",
+  "args": [
+    "-c",
+    "checkpoints/ckpt_11999.pt"
+  ],
+  "program": "/home/wgk1727/GPT2_from_Scratch_with_RL_finetuning/src/ppo_finetune.py",
+  "codePath": "src/ppo_finetune.py",
+  "codePathLocal": "src/ppo_finetune.py",
+  "git": {
+    "remote": "git@github.com:saifahmadgit/GPT2_from_Scratch_with_RL_finetuning.git",
+    "commit": "66acaf33b4324f805b63ab1d0ee34ce2d7c04f10"
+  },
+  "email": "saif.ahmad98745@gmail.com",
+  "root": "/home/wgk1727/GPT2_from_Scratch_with_RL_finetuning",
+  "host": "sheep",
+  "executable": "/home/wgk1727/GPT2_from_Scratch_with_RL_finetuning/.venv/bin/python",
+  "cpu_count": 64,
+  "cpu_count_logical": 128,
+  "gpu": "NVIDIA RTX 6000 Ada Generation",
+  "gpu_count": 2,
+  "disk": {
+    "/": {
+      "total": "3778190245888",
+      "used": "1752658108416"
+    }
+  },
+  "memory": {
+    "total": "1068895948800"
+  },
+  "gpu_nvidia": [
+    {
+      "name": "NVIDIA RTX 6000 Ada Generation",
+      "memoryTotal": "51527024640",
+      "cudaCores": 18176,
+      "architecture": "Ada",
+      "uuid": "GPU-9acbb8ee-1bce-94d5-491a-59d625fbee63"
+    },
+    {
+      "name": "NVIDIA RTX 6000 Ada Generation",
+      "memoryTotal": "51527024640",
+      "cudaCores": 18176,
+      "architecture": "Ada",
+      "uuid": "GPU-5cbe641a-fd41-6c70-b9b2-36938dc803a1"
+    }
+  ],
+  "cudaVersion": "12.4",
+  "writerId": "luwxpb006s8013s81o1ea58qlg7xco7h"
+}
