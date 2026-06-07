@@ -13,13 +13,6 @@ Cast of characters
   reference       : a FROZEN copy of the base model. Only used for the KL leash.
   environment     : "append the sampled token"; reward = dialogue_reward(text).
 
-One PPO iteration
------------------
-  1. ROLLOUT   – sample B completions from the current policy (the "simulation").
-  2. REWARD    – score each with dialogue_reward, then subtract β·KL per token.
-  3. ADVANTAGE – GAE(γ, λ) using the value head as the baseline.
-  4. UPDATE    – PPO clipped objective + value loss + entropy bonus.
-
 Usage
 -----
     # fine-tune the latest checkpoint in checkpoints/
@@ -55,12 +48,11 @@ from config import (
     RL_LEARNING_RATE, PPO_EPOCHS, PPO_CLIP, PPO_MINIBATCH,
     GAE_GAMMA, GAE_LAMBDA, VALUE_COEFF, ENTROPY_COEFF, KL_COEFF,
     RL_GRAD_CLIP, RL_SAVE_INTERVAL,
-    RL_PAIR_BONUS, RL_UNBALANCED_PENALTY,
     WANDB_LOG, RL_WANDB_PROJECT,
 )
 from model import GPT, GPTConfig
 from generate import find_latest_checkpoint
-from reward import dialogue_reward
+from reward import dialogue_reward, W_DIALOGUE, W_PAIRS, W_UNBALANCED
 
 torch.manual_seed(1337)
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -137,7 +129,7 @@ def compute_rewards(seq: torch.Tensor, prompt_len: int) -> tuple[torch.Tensor, l
     infos = []
     for b in range(seq.size(0)):
         gen_ids = seq[b, prompt_len:].tolist()
-        info = dialogue_reward(gen_ids, enc, RL_PAIR_BONUS, RL_UNBALANCED_PENALTY)
+        info = dialogue_reward(gen_ids, enc)   # weights come from reward.py's tunable block
         rewards[b] = torch.tensor(info.per_token, device=device)
         infos.append(info)
     return rewards, infos
@@ -256,20 +248,47 @@ def main() -> None:
                 optimizer.step()
                 pg_losses.append(pg.item()); v_losses.append(v_loss.item()); ent_vals.append(ent.item())
 
-        # ---- logging ----
-        mean_frac = float(np.mean([i.dialogue_fraction for i in infos]))
-        mean_pairs = float(np.mean([i.num_pairs for i in infos]))
-        mean_reward = task_rewards.sum(dim=1).mean().item()
+        # ---- logging: full reward decomposition so you can see WHICH term dominates ----
+        # raw sub-scores (each in [0, 1]), averaged over the batch
+        mean_dlg_frac   = float(np.mean([i.dialogue_fraction for i in infos]))
+        mean_pair_score = float(np.mean([i.pair_score for i in infos]))
+        mean_strand     = float(np.mean([i.stranded_fraction for i in infos]))
+        mean_pairs      = float(np.mean([i.num_pairs for i in infos]))
+        mean_ent        = float(np.mean(ent_vals))
+        # weighted contributions — these EXACTLY sum to the task reward total
+        dlg_term    = W_DIALOGUE   * mean_dlg_frac      # +
+        pair_term   = W_PAIRS      * mean_pair_score    # +
+        strand_term = W_UNBALANCED * mean_strand        # − (penalty)
+        task_total  = dlg_term + pair_term - strand_term
+        # KL leash (computed in the loop; its weight is KL_COEFF, see line above)
         mean_kl = kl.sum(dim=1).mean().item()
-        print(f"iter {it:4d} | dlg_frac {mean_frac:.3f} | pairs {mean_pairs:.2f} | "
-              f"reward {mean_reward:6.2f} | KL {mean_kl:6.2f} | "
-              f"pg {np.mean(pg_losses):+.3f} | v {np.mean(v_losses):.3f}")
+        kl_pen  = KL_COEFF * mean_kl                     # − (penalty)
+        net     = task_total - kl_pen                    # the reward PPO actually optimizes
+
+        print(f"iter {it:4d} | total {net:+.3f} = dlg {dlg_term:+.3f} + pair {pair_term:+.3f} "
+              f"- strand {strand_term:.3f} - kl {kl_pen:.3f}  |  "
+              f"raw[dlg_frac {mean_dlg_frac:.2f} pair {mean_pair_score:.2f} strand {mean_strand:.2f} "
+              f"pairs {mean_pairs:.2f} KL {mean_kl:6.2f}]  |  "
+              f"pg {np.mean(pg_losses):+.3f} v {np.mean(v_losses):.3f} ent {mean_ent:.2f}")
         if use_wandb:
             wandb.log({
-                "rl/dialogue_fraction": mean_frac, "rl/valid_pairs": mean_pairs,
-                "rl/task_reward": mean_reward, "rl/kl": mean_kl,
-                "rl/pg_loss": float(np.mean(pg_losses)), "rl/value_loss": float(np.mean(v_losses)),
-                "rl/entropy": float(np.mean(ent_vals)),
+                # total reward and its four components (the two penalties logged negative)
+                "rl/total_reward":  net,
+                "rl/term_dialogue": dlg_term,
+                "rl/term_pairs":    pair_term,
+                "rl/term_stranded": -strand_term,
+                "rl/term_kl":       -kl_pen,
+                "rl/task_reward":   task_total,
+                # raw (unweighted) sub-scores
+                "rl/dialogue_fraction": mean_dlg_frac,
+                "rl/pair_score":        mean_pair_score,
+                "rl/stranded_fraction": mean_strand,
+                "rl/valid_pairs":       mean_pairs,
+                "rl/kl":                mean_kl,
+                # optimization
+                "rl/pg_loss":    float(np.mean(pg_losses)),
+                "rl/value_loss": float(np.mean(v_losses)),
+                "rl/entropy":    mean_ent,
             }, step=it)
 
         # ---- checkpoint ----

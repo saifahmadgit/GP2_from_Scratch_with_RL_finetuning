@@ -68,9 +68,10 @@ KL_COEFF         = 0.1    # β — strength of the KL leash to the reference mod
 RL_GRAD_CLIP     = 1.0
 RL_SAVE_INTERVAL = 20     # save a checkpoint every N PPO iterations
 
-# Reward shaping (see reward.py)
-RL_PAIR_BONUS         = 0.5   # bonus per *balanced* "…" quote pair (rewards real exchanges)
-RL_UNBALANCED_PENALTY = 1.0   # penalty if a completion leaves a quote unclosed
+# Reward shaping now lives at the top of reward.py (W_DIALOGUE, W_PAIRS,
+# W_UNBALANCED, TARGET_PAIRS, MIN_SPAN) so the reward is tuned in one place. The
+# reward is normalised to ~[-1, 1] per completion — note that makes KL_COEFF
+# above far too large for the new scale; expect to lower it when you retrain.
 
 # Logging
 RL_WANDB_PROJECT = "gpt2-rl-dialogify"
