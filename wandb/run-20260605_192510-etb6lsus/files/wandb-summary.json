@@ -1,1 +1,0 @@
-{"rl/entropy":7.361678600311279,"rl/kl":215.72491455078125,"rl/pg_loss":-0.008126662578433752,"rl/task_reward":43.875,"rl/dialogue_fraction":0.7362926893761935,"rl/value_loss":9.893790483474731,"_runtime":79.939516177,"_step":199,"rl/valid_pairs":0,"_timestamp":1.7807055911491365e+09,"_wandb":{"runtime":79}}

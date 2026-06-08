@@ -257,12 +257,14 @@ def main() -> None:
         # ---- 4. PPO UPDATE ----
         B = seq.size(0)
         pg_losses, v_losses, ent_vals = [], [], []
+        clip_fracs, approx_kls, grad_norms = [], [], []
         for _ in range(PPO_EPOCHS):
             perm = torch.randperm(B)
             for s in range(0, B, PPO_MINIBATCH):
                 mb = perm[s: s + PPO_MINIBATCH]
                 new_logp, new_values, entropy = eval_sequences(policy, value_head, seq[mb], prompt_len)
-                ratio = torch.exp(new_logp - old_logp[mb])
+                logratio = new_logp - old_logp[mb]
+                ratio = torch.exp(logratio)
                 a = adv_norm[mb]
                 pg = -torch.min(ratio * a,
                                 torch.clamp(ratio, 1 - PPO_CLIP, 1 + PPO_CLIP) * a).mean()
@@ -272,10 +274,16 @@ def main() -> None:
 
                 optimizer.zero_grad(set_to_none=True)
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(
+                gnorm = torch.nn.utils.clip_grad_norm_(
                     list(policy.parameters()) + list(value_head.parameters()), RL_GRAD_CLIP)
                 optimizer.step()
                 pg_losses.append(pg.item()); v_losses.append(v_loss.item()); ent_vals.append(ent.item())
+                with torch.no_grad():
+                    # diagnostics: how much THIS update moved the policy (vs. the
+                    # reference-KL logged elsewhere) and whether the clip is binding.
+                    clip_fracs.append(((ratio - 1.0).abs() > PPO_CLIP).float().mean().item())
+                    approx_kls.append(((ratio - 1.0) - logratio).mean().item())  # Schulman k3
+                    grad_norms.append(float(gnorm))
 
         # ---- logging: full reward decomposition so you can see WHICH term dominates ----
         # raw sub-scores (each in [0, 1]), averaged over the batch
@@ -284,6 +292,19 @@ def main() -> None:
         mean_strand     = float(np.mean([i.stranded_fraction for i in infos]))
         mean_pairs      = float(np.mean([i.num_pairs for i in infos]))
         mean_ent        = float(np.mean(ent_vals))
+        # PPO health diagnostics
+        mean_clipfrac   = float(np.mean(clip_fracs))    # how often the clip binds
+        mean_approx_kl  = float(np.mean(approx_kls))    # policy movement per update
+        mean_gradnorm   = float(np.mean(grad_norms))    # pre-clip grad magnitude
+        # critic quality: fraction of return variance the value head explains
+        with torch.no_grad():
+            y = returns.flatten(); var_y = y.var()
+            explained_var = float(1.0 - (y - old_values.flatten()).var() / (var_y + 1e-8)) \
+                if var_y > 0 else 0.0
+        # collapse / reward-hacking detector: distinct generated tokens per completion
+        gen = seq[:, prompt_len:]
+        mean_distinct   = float(np.mean(
+            [len(set(gen[b].tolist())) / gen.size(1) for b in range(gen.size(0))]))
         # weighted contributions — these EXACTLY sum to the task reward total
         dlg_term    = W_DIALOGUE   * mean_dlg_frac      # +
         pair_term   = W_PAIRS      * mean_pair_score    # +
@@ -299,7 +320,9 @@ def main() -> None:
               f"- strand {strand_term:.3f} - kl {kl_pen:.3f}  |  "
               f"raw[dlg_frac {mean_dlg_frac:.2f} pair {mean_pair_score:.2f} strand {mean_strand:.2f} "
               f"pairs {mean_pairs:.2f} KL {mean_kl:6.2f} β {kl_coef:.4f}]  |  "
-              f"pg {np.mean(pg_losses):+.3f} v {np.mean(v_losses):.3f} ent {mean_ent:.2f}")
+              f"pg {np.mean(pg_losses):+.3f} v {np.mean(v_losses):.3f} ent {mean_ent:.2f} "
+              f"ev {explained_var:+.2f} clip {mean_clipfrac:.2f} akl {mean_approx_kl:+.4f} "
+              f"gn {mean_gradnorm:.2f} dist {mean_distinct:.2f}")
         if use_wandb:
             # Plot titles are the keys below. Rewards and penalties are labelled
             # so each panel is self-explanatory:  total reward = (reward terms) −
@@ -317,6 +340,12 @@ def main() -> None:
                 "value loss":  float(np.mean(v_losses)),
                 "policy loss": float(np.mean(pg_losses)),
                 "entropy":     mean_ent,
+                # PPO health diagnostics (grouped under "ppo/")
+                "ppo/explained_variance": explained_var,  # critic quality (→1 good)
+                "ppo/clip_fraction":      mean_clipfrac,   # is PPO_CLIP binding?
+                "ppo/approx_kl":          mean_approx_kl,  # policy move per update
+                "ppo/grad_norm":          mean_gradnorm,   # pre-clip grad magnitude
+                "ppo/distinct_frac":      mean_distinct,   # ↓ = repetition/collapse
                 # raw unweighted sub-scores (grouped under a "raw" section)
                 "raw/dialogue_fraction": mean_dlg_frac,
                 "raw/pair_score":        mean_pair_score,
@@ -329,6 +358,15 @@ def main() -> None:
         # ---- adaptive KL: nudge β toward holding mean_kl at KL_TARGET ----
         if KL_ADAPTIVE:
             kl_ctl.update(mean_kl, RL_BATCH_SIZE)
+
+        # ---- periodic sample completions → wandb table (eyeball reward hacking) ----
+        if use_wandb and ((it + 1) % RL_SAVE_INTERVAL == 0 or it == args.iters - 1):
+            comp_rewards = task_rewards.sum(dim=1)
+            tbl = wandb.Table(columns=["iter", "task_reward", "completion"])
+            for b in range(min(4, seq.size(0))):
+                tbl.add_data(it + 1, round(comp_rewards[b].item(), 3),
+                             enc.decode(seq[b, prompt_len:].tolist()))
+            wandb.log({"samples": tbl}, step=it)
 
         # ---- checkpoint ----
         if (it + 1) % RL_SAVE_INTERVAL == 0 or it == args.iters - 1:
