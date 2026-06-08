@@ -47,6 +47,7 @@ from config import (
     RL_TEMPERATURE, RL_TOP_K,
     RL_LEARNING_RATE, PPO_EPOCHS, PPO_CLIP, PPO_MINIBATCH,
     GAE_GAMMA, GAE_LAMBDA, VALUE_COEFF, ENTROPY_COEFF, KL_COEFF,
+    KL_ADAPTIVE, KL_TARGET, KL_HORIZON,
     RL_GRAD_CLIP, RL_SAVE_INTERVAL,
     WANDB_LOG, RL_WANDB_PROJECT,
 )
@@ -57,6 +58,27 @@ from reward import dialogue_reward, W_DIALOGUE, W_PAIRS, W_UNBALANCED
 torch.manual_seed(1337)
 device = "cuda" if torch.cuda.is_available() else "cpu"
 enc = tiktoken.get_encoding("gpt2")
+
+
+# ---------------------------------------------------------------------------
+# Adaptive KL controller (InstructGPT / Ziegler et al. 2019; same as TRL)
+# ---------------------------------------------------------------------------
+class AdaptiveKLController:
+    """Auto-tunes the KL coefficient β to hold the measured KL near a target.
+
+    Robotics analogy: a P-controller on the KL "leash". The error is how far the
+    measured per-completion KL is above/below the target; β is the actuator. The
+    error is clipped to ±20% so β never jumps more than that fraction per step,
+    and `horizon` sets how gently it corrects. `value` is the live β.
+    """
+    def __init__(self, init_coef: float, target: float, horizon: float):
+        self.value = init_coef
+        self.target = target
+        self.horizon = horizon
+
+    def update(self, current_kl: float, n_steps: int) -> None:
+        proportional_error = float(np.clip(current_kl / self.target - 1.0, -0.2, 0.2))
+        self.value *= 1.0 + proportional_error * n_steps / self.horizon
 
 
 # ---------------------------------------------------------------------------
@@ -158,6 +180,7 @@ def main() -> None:
     ap.add_argument("-c", "--checkpoint", default=None,
                     help="Base checkpoint to fine-tune (default: latest in checkpoints/).")
     ap.add_argument("--iters", type=int, default=RL_ITERS, help="Number of PPO iterations.")
+    ap.add_argument("--name", default="exp_12", help="wandb run name (default: exp_12).")
     ap.add_argument("--no-wandb", action="store_true", help="Disable wandb logging.")
     args = ap.parse_args()
 
@@ -190,6 +213,11 @@ def main() -> None:
         lr=RL_LEARNING_RATE, betas=(0.9, 0.95),
     )
 
+    # KL leash: adaptive β (InstructGPT-style) or a fixed constant.
+    kl_ctl = AdaptiveKLController(KL_COEFF, KL_TARGET, KL_HORIZON)
+    print(f"KL leash: {'adaptive' if KL_ADAPTIVE else 'fixed'} β, "
+          f"start={KL_COEFF}" + (f", target={KL_TARGET} nats" if KL_ADAPTIVE else ""))
+
     pool = load_prompt_pool()
     RL_CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -197,12 +225,13 @@ def main() -> None:
     if use_wandb:
         try:
             import wandb
-            wandb.init(project=RL_WANDB_PROJECT, config={
+            wandb.init(project=RL_WANDB_PROJECT, name=args.name, config={
                 "base_ckpt": os.path.basename(base_ckpt), "iters": args.iters,
                 "batch": RL_BATCH_SIZE, "gen_len": RL_GEN_LEN, "lr": RL_LEARNING_RATE,
                 "kl_coeff": KL_COEFF, "ppo_clip": PPO_CLIP, "ppo_epochs": PPO_EPOCHS,
+                "kl_adaptive": KL_ADAPTIVE, "kl_target": KL_TARGET, "kl_horizon": KL_HORIZON,
             })
-            print(f"wandb: logging to '{RL_WANDB_PROJECT}'")
+            print(f"wandb: logging to '{RL_WANDB_PROJECT}' as run '{args.name}'")
         except Exception as e:
             use_wandb = False
             print(f"wandb disabled ({e}).")
@@ -219,7 +248,7 @@ def main() -> None:
             ref_logp, _, _ = eval_sequences(reference, value_head, seq, prompt_len)
         task_rewards, infos = compute_rewards(seq, prompt_len)
         kl = old_logp - ref_logp                             # per-token KL estimate
-        rewards = task_rewards - KL_COEFF * kl               # KL leash folded into reward
+        rewards = task_rewards - kl_ctl.value * kl           # KL leash folded into reward (live β)
 
         # ---- 3. ADVANTAGE ----
         advantages, returns = compute_gae(rewards, old_values)
@@ -260,36 +289,46 @@ def main() -> None:
         pair_term   = W_PAIRS      * mean_pair_score    # +
         strand_term = W_UNBALANCED * mean_strand        # − (penalty)
         task_total  = dlg_term + pair_term - strand_term
-        # KL leash (computed in the loop; its weight is KL_COEFF, see line above)
-        mean_kl = kl.sum(dim=1).mean().item()
-        kl_pen  = KL_COEFF * mean_kl                     # − (penalty)
-        net     = task_total - kl_pen                    # the reward PPO actually optimizes
+        # KL leash (computed in the loop; its weight is the live adaptive β)
+        mean_kl  = kl.sum(dim=1).mean().item()           # per-completion KL (nats)
+        kl_coef  = kl_ctl.value                          # β actually used this iter
+        kl_pen   = kl_coef * mean_kl                     # − (penalty)
+        net      = task_total - kl_pen                   # the reward PPO actually optimizes
 
         print(f"iter {it:4d} | total {net:+.3f} = dlg {dlg_term:+.3f} + pair {pair_term:+.3f} "
               f"- strand {strand_term:.3f} - kl {kl_pen:.3f}  |  "
               f"raw[dlg_frac {mean_dlg_frac:.2f} pair {mean_pair_score:.2f} strand {mean_strand:.2f} "
-              f"pairs {mean_pairs:.2f} KL {mean_kl:6.2f}]  |  "
+              f"pairs {mean_pairs:.2f} KL {mean_kl:6.2f} β {kl_coef:.4f}]  |  "
               f"pg {np.mean(pg_losses):+.3f} v {np.mean(v_losses):.3f} ent {mean_ent:.2f}")
         if use_wandb:
+            # Plot titles are the keys below. Rewards and penalties are labelled
+            # so each panel is self-explanatory:  total reward = (reward terms) −
+            # (penalty terms). Penalties are logged as positive magnitudes.
             wandb.log({
-                # total reward and its four components (the two penalties logged negative)
-                "rl/total_reward":  net,
-                "rl/term_dialogue": dlg_term,
-                "rl/term_pairs":    pair_term,
-                "rl/term_stranded": -strand_term,
-                "rl/term_kl":       -kl_pen,
-                "rl/task_reward":   task_total,
-                # raw (unweighted) sub-scores
-                "rl/dialogue_fraction": mean_dlg_frac,
-                "rl/pair_score":        mean_pair_score,
-                "rl/stranded_fraction": mean_strand,
-                "rl/valid_pairs":       mean_pairs,
-                "rl/kl":                mean_kl,
+                # headline
+                "total reward": net,
+                # reward components (positive contributions)
+                "reward - dialogue": dlg_term,
+                "reward - pairs":    pair_term,
+                # penalty components (magnitudes;  total = rewards − penalties)
+                "penalty - stranded": strand_term,
+                "penalty - kl":       kl_pen,
                 # optimization
-                "rl/pg_loss":    float(np.mean(pg_losses)),
-                "rl/value_loss": float(np.mean(v_losses)),
-                "rl/entropy":    mean_ent,
+                "value loss":  float(np.mean(v_losses)),
+                "policy loss": float(np.mean(pg_losses)),
+                "entropy":     mean_ent,
+                # raw unweighted sub-scores (grouped under a "raw" section)
+                "raw/dialogue_fraction": mean_dlg_frac,
+                "raw/pair_score":        mean_pair_score,
+                "raw/stranded_fraction": mean_strand,
+                "raw/valid_pairs":       mean_pairs,
+                "raw/kl_nats":           mean_kl,
+                "raw/kl_coeff":          kl_coef,
             }, step=it)
+
+        # ---- adaptive KL: nudge β toward holding mean_kl at KL_TARGET ----
+        if KL_ADAPTIVE:
+            kl_ctl.update(mean_kl, RL_BATCH_SIZE)
 
         # ---- checkpoint ----
         if (it + 1) % RL_SAVE_INTERVAL == 0 or it == args.iters - 1:

@@ -45,10 +45,11 @@ WANDB_RUN_NAME = None                 # None → wandb auto-generates a run name
 # ---------------------------------------------------------------------------
 # The actor/policy is the pretrained GPT-2 (weights updated). A frozen copy of
 # it is the reference model (KL leash). A new Linear(n_embd, 1) value head is the
-# critic. Reward = fraction of generated tokens that sit inside quotation marks.
+# critic. The reward (normalised to ~[-1, 1] per completion) is defined at the
+# top of reward.py: W_DIALOGUE*dialogue + W_PAIRS*pairs - W_UNBALANCED*stranded.
 
 # Rollout ("simulation") settings
-RL_ITERS         = 200    # number of PPO iterations
+RL_ITERS         = 2000    # number of PPO iterations
 RL_BATCH_SIZE    = 16     # completions sampled per iteration
 RL_PROMPT_LEN    = 16     # tokens of prompt (sampled from train data)
 RL_GEN_LEN       = 64     # new tokens generated per completion
@@ -64,14 +65,19 @@ GAE_GAMMA        = 1.0    # discount (1.0 is standard for short text episodes)
 GAE_LAMBDA       = 0.95   # GAE smoothing
 VALUE_COEFF      = 0.5    # weight on the critic (value) loss
 ENTROPY_COEFF    = 0.01   # entropy bonus (encourages exploration)
-KL_COEFF         = 0.1    # β — strength of the KL leash to the reference model
+KL_COEFF         = 0.02   # β — strength of the KL leash (lowered to match the ~[-1,1] reward scale)
+                          #     when KL_ADAPTIVE, this is just the STARTING value.
+# Adaptive KL controller 
+# β, auto-tune it each iteration to hold the measured policy↔reference KL near a
+# target. β rises when the policy drifts too far, relaxes when it stays close.
+KL_ADAPTIVE      = True   # False → fixed β = KL_COEFF (old behaviour)
+KL_TARGET        = 4.0    # target per-completion KL (nats). Picked from the fixed-β
+                          #   run l89vhpb6: KL crept 3.0→4.4 (peak 6.3) without ever
+                          #   stabilising. 4.0 is the productive mid-band — holds the
+                          #   leash there instead of letting it drift up unbounded.
+KL_HORIZON       = 10000  # completions over which the controller corrects (smoothing)
 RL_GRAD_CLIP     = 1.0
 RL_SAVE_INTERVAL = 20     # save a checkpoint every N PPO iterations
-
-# Reward shaping now lives at the top of reward.py (W_DIALOGUE, W_PAIRS,
-# W_UNBALANCED, TARGET_PAIRS, MIN_SPAN) so the reward is tuned in one place. The
-# reward is normalised to ~[-1, 1] per completion — note that makes KL_COEFF
-# above far too large for the new scale; expect to lower it when you retrain.
 
 # Logging
 RL_WANDB_PROJECT = "gpt2-rl-dialogify"
