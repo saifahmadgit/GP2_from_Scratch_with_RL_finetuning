@@ -1,18 +1,18 @@
 """
-Gradio demo for GPT-2 (from-scratch) text generation.
+Gradio demo: base GPT-2 vs. RL-fine-tuned GPT-2, side by side.
 
-The model is loaded lazily on first inference.  While no checkpoint exists the
-UI stays functional — it just returns a clear status message so you can test
-the plumbing before training is done.
+Loads two checkpoints automatically (the highest-step one in each folder):
+  • LEFT  — base GPT-2 trained on the detective-novel corpus  (checkpoints/)
+  • RIGHT — the PPO "dialogify" fine-tune                      (checkpoints_RL/)
 
-To plug in your model:
-  1. Import it here:   from model import GPT, GPTConfig
-  2. Fill in _load_model() to instantiate and load weights.
-  3. Fill in _generate() to call model.generate() and decode tokens.
+Type one prompt and both models complete it with the SAME sampling knobs and the
+SAME random seed, so any difference you see is the RL fine-tuning, not luck.
+Models are loaded lazily on first generation and cached.
 """
 
 import glob
 import os
+import re
 import sys
 
 _SRC = os.path.dirname(os.path.abspath(__file__))
@@ -22,185 +22,168 @@ if _SRC not in sys.path:
 import gradio as gr  # noqa: E402
 import tiktoken  # noqa: E402
 import torch  # noqa: E402
+from torch.nn import functional as F  # noqa: E402
 
-from config import CHECKPOINT_DIR  # noqa: E402
+from config import CHECKPOINT_DIR, RL_CHECKPOINT_DIR  # noqa: E402
 
 # ---------------------------------------------------------------------------
-# Tokeniser (GPT-2 BPE — same encoding your model will use)
+# Tokeniser + device
 # ---------------------------------------------------------------------------
 _enc = tiktoken.get_encoding("gpt2")
-
-# ---------------------------------------------------------------------------
-# Model state
-# ---------------------------------------------------------------------------
-_model = None
 _device = "cuda" if torch.cuda.is_available() else "cpu"
 
+# Cached models, keyed by the checkpoint path they were loaded from.
+_cache: dict[str, object] = {}
 
-def _find_latest_checkpoint() -> str | None:
-    """Return the most-recently modified .pt checkpoint, or None."""
-    pattern = str(CHECKPOINT_DIR / "**" / "*.pt")
-    candidates = glob.glob(pattern, recursive=True)
+
+# ---------------------------------------------------------------------------
+# Checkpoint discovery — pick the HIGHEST-step checkpoint in a folder
+# ---------------------------------------------------------------------------
+def _latest_checkpoint(folder) -> str | None:
+    """Return the .pt file with the largest trailing step number (e.g.
+    ckpt_11999.pt, rl_02000.pt). Falls back to most-recently modified."""
+    candidates = glob.glob(str(folder / "**" / "*.pt"), recursive=True)
     if not candidates:
         return None
-    return max(candidates, key=os.path.getmtime)
+
+    def step_of(path: str) -> int:
+        m = re.search(r"(\d+)\.pt$", os.path.basename(path))
+        return int(m.group(1)) if m else -1
+
+    best = max(candidates, key=step_of)
+    if step_of(best) < 0:                       # no numbered files → use mtime
+        best = max(candidates, key=os.path.getmtime)
+    return best
 
 
 def _load_model(ckpt_path: str):
-    """Instantiate GPT and load weights from *ckpt_path*."""
+    """Instantiate GPT and load weights, using the config saved in the ckpt."""
     from model import GPT, GPTConfig
-    cfg = GPTConfig()  # defaults sourced from config.py
-    m = GPT(cfg).to(_device)
     state = torch.load(ckpt_path, map_location=_device, weights_only=False)
+    cfg = state.get("config", GPTConfig())      # checkpoints store their own config
+    m = GPT(cfg).to(_device)
     m.load_state_dict(state["model"])
     m.eval()
     return m
 
 
-def _get_model():
-    """Load model once and cache globally."""
-    global _model
-    if _model is None:
-        ckpt = _find_latest_checkpoint()
-        if ckpt is None:
-            return None  # no checkpoint yet — caller handles this
-        print(f"[GPT-2] Loading checkpoint: {ckpt}")
-        _model = _load_model(ckpt)
-        print(f"[GPT-2] Model ready on {_device}.")
-    return _model
+def _get_model(ckpt_path: str):
+    if ckpt_path not in _cache:
+        print(f"[app] Loading checkpoint: {ckpt_path}")
+        _cache[ckpt_path] = _load_model(ckpt_path)
+        print(f"[app] Ready on {_device}.")
+    return _cache[ckpt_path]
 
 
 # ---------------------------------------------------------------------------
-# Generation
+# Sampling — temperature / top-k / top-p (nucleus) / seed
 # ---------------------------------------------------------------------------
-
-def _generate(
-    model,
-    prompt_ids: list[int],
-    max_new_tokens: int,
-    temperature: float,
-    top_k: int,
-) -> list[int]:
-    """Token-by-token autoregressive generation via model.generate()."""
-    ids = torch.tensor([prompt_ids], dtype=torch.long, device=_device)
+def _sample(model, prompt_ids, max_new_tokens, temperature, top_k, top_p, seed):
+    if seed is not None and seed >= 0:
+        torch.manual_seed(int(seed))           # same seed → identical noise for both models
+    idx = torch.tensor([prompt_ids], dtype=torch.long, device=_device)
+    temperature = max(float(temperature), 1e-5)
     with torch.no_grad():
-        out = model.generate(ids, max_new_tokens, temperature=temperature,
-                             top_k=top_k if top_k > 0 else None)
-    return out[0].tolist()
+        for _ in range(int(max_new_tokens)):
+            idx_cond = idx[:, -model.config.block_size:]
+            logits, _ = model(idx_cond)
+            logits = logits[:, -1, :] / temperature
+            if top_k and top_k > 0:
+                v, _ = torch.topk(logits, min(int(top_k), logits.size(-1)))
+                logits[logits < v[:, [-1]]] = float("-inf")
+            probs = F.softmax(logits, dim=-1)
+            if top_p and 0.0 < top_p < 1.0:
+                sorted_probs, sorted_idx = torch.sort(probs, descending=True)
+                cum = sorted_probs.cumsum(dim=-1)
+                # drop tokens once the cumulative mass (before this token) passes top_p,
+                # but always keep at least the single most-likely token
+                drop = (cum - sorted_probs) > top_p
+                sorted_probs[drop] = 0.0
+                sorted_probs /= sorted_probs.sum(dim=-1, keepdim=True)
+                nxt = torch.multinomial(sorted_probs, num_samples=1)
+                idx_next = sorted_idx.gather(-1, nxt)
+            else:
+                idx_next = torch.multinomial(probs, num_samples=1)
+            idx = torch.cat((idx, idx_next), dim=1)
+    return idx[0].tolist()
 
 
 # ---------------------------------------------------------------------------
-# Gradio callback
+# Gradio callback — run BOTH models on the same prompt/knobs/seed
 # ---------------------------------------------------------------------------
-
-def generate_text(
-    prompt: str,
-    max_new_tokens: int,
-    temperature: float,
-    top_k: int,
-) -> str:
+def generate_both(prompt, max_new_tokens, temperature, seed):
     if not prompt.strip():
-        return "(Enter a prompt above.)"
+        msg = "(Enter a prompt above.)"
+        return msg, msg
 
-    # Check for checkpoint
-    ckpt = _find_latest_checkpoint()
-    if ckpt is None:
-        return (
-            "No checkpoint found in checkpoints/\n\n"
-            "Train the model first, then come back and generate!"
-        )
+    base_ckpt = _latest_checkpoint(CHECKPOINT_DIR)
+    rl_ckpt = _latest_checkpoint(RL_CHECKPOINT_DIR)
+    prompt_ids = _enc.encode(prompt)
 
-    # Try loading model (catches NotImplementedError during development)
-    try:
-        model = _get_model()
-    except NotImplementedError:
-        return (
-            "[STUB MODE]  Model class not yet implemented.\n\n"
-            f"Checkpoint detected:  {ckpt}\n"
-            f"Prompt tokens:        {_enc.encode(prompt)}\n\n"
-            "Fill in _load_model() and _generate() in src/app.py to enable real inference."
-        )
-    except Exception as exc:
-        return f"Error loading model: {exc}"
+    def run(ckpt, missing_hint):
+        if ckpt is None:
+            return missing_hint
+        try:
+            model = _get_model(ckpt)
+            out = _sample(model, prompt_ids, max_new_tokens, temperature,
+                          top_k=0, top_p=1.0, seed=seed)
+            return _enc.decode(out[len(prompt_ids):])
+        except Exception as exc:                # keep the UI alive on errors
+            return f"Error: {exc}"
 
-    # Run generation
-    try:
-        prompt_ids = _enc.encode(prompt)
-        output_ids = _generate(model, prompt_ids, max_new_tokens, temperature, top_k)
-        new_ids    = output_ids[len(prompt_ids):]
-        return _enc.decode(new_ids)
-    except NotImplementedError:
-        return (
-            "[STUB MODE]  Generation loop not yet implemented.\n\n"
-            "Model loaded successfully — fill in _generate() in src/app.py."
-        )
-    except Exception as exc:
-        return f"Generation error: {exc}"
+    base_text = run(base_ckpt, f"No base checkpoint in {CHECKPOINT_DIR}. Run train.py first.")
+    rl_text = run(rl_ckpt, f"No RL checkpoint in {RL_CHECKPOINT_DIR}. Run ppo_finetune.py first.")
+    return base_text, rl_text
 
 
 def get_status() -> str:
-    ckpt = _find_latest_checkpoint()
-    if ckpt is None:
-        return f"No checkpoint found in `{CHECKPOINT_DIR}`"
-    rel = os.path.relpath(ckpt, CHECKPOINT_DIR)
-    return f"Checkpoint ready: `checkpoints/{rel}`   |   Device: `{_device}`"
+    base = _latest_checkpoint(CHECKPOINT_DIR)
+    rl = _latest_checkpoint(RL_CHECKPOINT_DIR)
+    base_s = f"`{os.path.basename(base)}`" if base else "_none_"
+    rl_s = f"`{os.path.basename(rl)}`" if rl else "_none_"
+    return f"Base: {base_s}  |  RL: {rl_s}  |  Device: `{_device}`"
 
 
 # ---------------------------------------------------------------------------
 # UI
 # ---------------------------------------------------------------------------
-
-with gr.Blocks(title="GPT-2 Text Generation") as app:
-    gr.Markdown("# GPT-2 (from scratch) — Text Generation")
+with gr.Blocks(title="GPT-2: Base vs. RL-Dialogify") as app:
+    gr.Markdown("# GPT-2 (from scratch): Base vs. RL-Fine-Tuned")
     gr.Markdown(
-        "Trained on *The Adventures of Sherlock Holmes* (Project Gutenberg). "
-        "Enter a prompt and tune the sampling knobs below."
+        "One prompt → two completions. **Left** is the base model (trained on "
+        "*The Adventures of Sherlock Holmes*); **right** is the PPO fine-tune that "
+        "was rewarded for writing dialogue. Both use the same knobs and seed."
     )
 
-    status_box = gr.Textbox(
-        value=get_status,
-        label="Model status",
-        interactive=False,
-        every=10,
-    )
+    status_box = gr.Textbox(value=get_status, label="Loaded checkpoints",
+                            interactive=False, every=10)
 
     prompt_box = gr.Textbox(
-        lines=4,
-        placeholder='e.g. "It was a cold foggy morning when Sherlock Holmes..."',
+        lines=3,
+        placeholder='e.g. "It was a cold foggy morning when Sherlock Holmes"',
         label="Prompt",
     )
 
     with gr.Row():
-        max_tokens_slider = gr.Slider(
-            minimum=10, maximum=500, value=100, step=10,
-            label="Max new tokens",
-        )
-        temperature_slider = gr.Slider(
-            minimum=0.1, maximum=2.0, value=0.8, step=0.05,
-            label="Temperature",
-        )
-        top_k_slider = gr.Slider(
-            minimum=0, maximum=200, value=50, step=5,
-            label="Top-k  (0 = disabled)",
-        )
+        max_tokens_slider = gr.Slider(10, 500, value=120, step=10, label="Max new tokens")
+        temperature_slider = gr.Slider(0.1, 2.0, value=0.8, step=0.05, label="Temperature")
+        seed_box = gr.Number(value=1337, precision=0, label="Seed  (-1 = random)")
 
     generate_btn = gr.Button("Generate", variant="primary")
 
-    output_box = gr.Textbox(
-        lines=10,
-        label="Generated text",
-        interactive=False,
-    )
+    with gr.Row():
+        base_out = gr.Textbox(lines=12, label="Base GPT-2 (detective novels)", interactive=False)
+        rl_out = gr.Textbox(lines=12, label="RL fine-tuned GPT-2 (dialogue)", interactive=False)
 
     generate_btn.click(
-        fn=generate_text,
-        inputs=[prompt_box, max_tokens_slider, temperature_slider, top_k_slider],
-        outputs=output_box,
+        fn=generate_both,
+        inputs=[prompt_box, max_tokens_slider, temperature_slider, seed_box],
+        outputs=[base_out, rl_out],
     )
 
     gr.Markdown(
-        "_Tip: Temperature → 1.0 = diverse, < 0.5 = focused. "
-        "Top-k = 0 samples from the full distribution._"
+        "_Temperature: 1.0 = diverse, < 0.5 = focused. "
+        "Fix the seed to compare the two models fairly._"
     )
 
 
