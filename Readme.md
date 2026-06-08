@@ -63,22 +63,27 @@ storyteller and the dialogue-tuned fine-tune.
 
 ## Results
 
-The base model was trained for 12,000 iterations on the Sherlock Holmes corpus,
-then RL fine-tuned for 2,000 PPO iterations. The plot below shows the base model's
-training loss converging over the run:
+The base model was trained for 12,000 iterations on the Sherlock Holmes corpus
+and then RL fine-tuned for 2,000 PPO iterations.
 
-![training loss](assets/training_loss.png)
+During RL fine-tuning, the total reward rises quickly in the first 500 steps and
+then saturates, staying roughly flat for the remainder of the run. The adaptive
+KL controller holds the policy close to the base model throughout, preventing
+fluency from degrading:
 
-During RL fine-tuning, the total reward rises as the model learns to produce
-real (closed) dialogue, while the adaptive KL controller holds the policy close
-to the base model so it doesn't forget how to write coherent English:
+![total reward](screenshots/rewards.png)
 
-![rl reward](assets/rl_reward.png)
+The difference between the two models is clearest when both complete the same
+prompt with the same random seed. The base model produces narration, which is
+what the checkpoint looks like before RL fine-tuning. The RL fine-tuned model,
+trained on top of that same checkpoint, immediately shifts into dialogue:
 
-The effect is clearest when both models complete the *same* prompt with the same
-seed. The base model narrates; the fine-tune breaks into dialogue:
+![result comparison](screenshots/resulst_compare.png)
 
-![example output](assets/example_output.png)
+Both outputs in the screenshot above come from the prompt "I was walking on the
+street" with seed 1337. The base model drifts into repetitive narration about
+doors, while the RL fine-tuned model produces back-and-forth dialogue, which is
+exactly the behaviour the reward was designed to encourage.
 
 ## Extra: Reinforcement Learning Fine-Tuning
 
